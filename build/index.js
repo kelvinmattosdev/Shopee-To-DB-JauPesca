@@ -19840,6 +19840,41 @@ var Result = import_lib.default.Result;
 var TypeOverrides = import_lib.default.TypeOverrides;
 var defaults2 = import_lib.default.defaults;
 
+// src/services/errorSanitizer.service.ts
+var REDACTED = "[REDACTED]";
+var SENSITIVE_KEY = /(?:access[_-]?token|refresh[_-]?token|\btoken\b|partner[_-]?key|api[_-]?key|client[_-]?secret|secret|password|passwd|authorization|cookie|database[_-]?url|connection[_-]?string|\bsign(?:ature)?\b)/i;
+var SENSITIVE_PAIR = /((?:access[_-]?token|refresh[_-]?token|token|partner[_-]?key|api[_-]?key|client[_-]?secret|secret|password|passwd|authorization|cookie|database[_-]?url|connection[_-]?string|sign(?:ature)?)\s*["']?\s*[:=]\s*["']?)(?!\[REDACTED\])([^,"'&}\]\r\n]+)/gi;
+function redactUrlCredentials(text) {
+  return text.replace(/([a-z][a-z\d+.-]*:\/\/)([^\s/@:]+)(?::[^\s/@]*)?@/gi, `$1${REDACTED}@`).replace(/([?&](?:access[_-]?token|refresh[_-]?token|token|partner[_-]?key|api[_-]?key|client[_-]?secret|secret|password|passwd|authorization|cookie|sign(?:ature)?)=)[^&#\s]*/gi, `$1${REDACTED}`);
+}
+function sanitizeSensitiveData(value, seen = new WeakSet) {
+  if (typeof value === "string") {
+    return redactUrlCredentials(value).replace(SENSITIVE_PAIR, `$1${REDACTED}`);
+  }
+  if (value === null || typeof value !== "object")
+    return value;
+  if (seen.has(value))
+    return "[CIRCULAR]";
+  seen.add(value);
+  if (Array.isArray(value))
+    return value.map((item) => sanitizeSensitiveData(item, seen));
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: sanitizeErrorMessage(value.message)
+    };
+  }
+  const sanitized = {};
+  for (const [key, item] of Object.entries(value)) {
+    sanitized[key] = SENSITIVE_KEY.test(key) ? REDACTED : sanitizeSensitiveData(item, seen);
+  }
+  return sanitized;
+}
+function sanitizeErrorMessage(error) {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : String(error);
+  return sanitizeSensitiveData(message);
+}
+
 // src/services/database.service.ts
 var dbUrl = databaseInfosForAccessToken.databaseUrl;
 var schema = databaseInfosForAccessToken.databaseSchema;
@@ -19879,6 +19914,9 @@ function isTransientDbError(err) {
 function getPool(target) {
   return target === "marketplaces" ? _dbMarketplaces : _db;
 }
+function databaseOperationError(error) {
+  return new Error(`[Database] Falha na opera\xE7\xE3o: ${sanitizeErrorMessage(error)}`);
+}
 async function queryWithRetry(text, params, retries = 1, opts) {
   const pool = getPool(opts?.db ?? "token");
   try {
@@ -19886,9 +19924,13 @@ async function queryWithRetry(text, params, retries = 1, opts) {
   } catch (err) {
     if (retries > 0 && isTransientDbError(err)) {
       await new Promise((r) => setTimeout(r, 200));
-      return await pool.query(text, params);
+      try {
+        return await pool.query(text, params);
+      } catch (retryError) {
+        throw databaseOperationError(retryError);
+      }
     }
-    throw err;
+    throw databaseOperationError(err);
   }
 }
 async function getAccessToken() {
@@ -19902,7 +19944,7 @@ async function getAccessToken() {
   const res = await queryWithRetry(query, ["shopee"], 1);
   const token = res.rows[0]?.access_token;
   if (!token) {
-    throw new Error(`Nenhum access_token encontrado em ${fullTable} para provider='shopee'`);
+    throw new Error("[Database] Nenhum access_token encontrado para o provider configurado.");
   }
   InfoSellerConfig.accessToken = token;
   return token;
@@ -20050,7 +20092,7 @@ DO UPDATE SET
       await queryWithRetry("COMMIT", [], 1, { db: "marketplaces" });
     } catch (e) {
       await queryWithRetry("ROLLBACK", [], 1, { db: "marketplaces" });
-      throw e;
+      throw databaseOperationError(e);
     }
   });
 }
@@ -20183,7 +20225,7 @@ DO UPDATE SET
       await queryWithRetry("COMMIT", [], 1, { db: "marketplaces" });
     } catch (e) {
       await queryWithRetry("ROLLBACK", [], 1, { db: "marketplaces" });
-      throw e;
+      throw databaseOperationError(e);
     }
   });
 }
@@ -20194,10 +20236,10 @@ function isHttpRequestError(res) {
 }
 function assertShopeeOk(res) {
   if (isHttpRequestError(res)) {
-    throw new Error(`[Shopee][HTTP] ${res.status ?? ""} ${res.error}: ${res.message}`);
+    throw new Error(`[Shopee][HTTP] ${res.status ?? ""} ${sanitizeErrorMessage(res.error)}: ${sanitizeErrorMessage(res.message)}`);
   }
   if (res.error) {
-    throw new Error(`[Shopee][API] ${res.error}: ${res.message || "Sem mensagem"}`);
+    throw new Error(`[Shopee][API] ${sanitizeErrorMessage(res.error)}: ${sanitizeErrorMessage(res.message || "Sem mensagem")}`);
   }
   return res;
 }
@@ -20250,7 +20292,7 @@ async function shopeeGet(urlWithPath, parameters, args) {
   const rawPath = urlWithPath.replace(info.host, "");
   const path = rawPath.split("?")[0];
   if (!path) {
-    throw new Error(`[requestApiShopee][GET] Ocorreu um erro ao definir o path. rawPath: ${rawPath}, urlWithPath: ${urlWithPath}, info.host: ${info.host}`);
+    throw new Error("[requestApiShopee][GET] Ocorreu um erro ao definir o path da requisi\xE7\xE3o.");
   }
   const retry = {
     tooManyRequestsTries: 0,
@@ -20306,8 +20348,8 @@ async function shopeeGet(urlWithPath, parameters, args) {
               ok: false,
               status,
               error: err.code ?? "AUTH_ERROR",
-              message: `${formatAxiosErrPrefix(status, err.code)}: ${err.message} (refresh token excedeu ${MAX_AUTH_REFRESH_TRIES} tentativa(s))`,
-              response: body
+              message: `${formatAxiosErrPrefix(status, err.code)}: ${sanitizeErrorMessage(err.message)} (refresh token excedeu ${MAX_AUTH_REFRESH_TRIES} tentativa(s))`,
+              response: sanitizeSensitiveData(body)
             };
           }
           await refreshAccessTokenOnce();
@@ -20326,8 +20368,8 @@ async function shopeeGet(urlWithPath, parameters, args) {
               ok: false,
               status,
               error: err.code ?? "TOO_MANY_REQUESTS",
-              message: `${formatAxiosErrPrefix(status, err.code)}: ${err.message} (429 aguardou ${Math.round(retry.tooManyRequestsWaitedMs / 1000)}s no total; limite=600s)`,
-              response: body
+              message: `${formatAxiosErrPrefix(status, err.code)}: ${sanitizeErrorMessage(err.message)} (429 aguardou ${Math.round(retry.tooManyRequestsWaitedMs / 1000)}s no total; limite=600s)`,
+              response: sanitizeSensitiveData(body)
             };
           }
           retry.tooManyRequestsWaitedMs = nextTotal;
@@ -20338,15 +20380,15 @@ async function shopeeGet(urlWithPath, parameters, args) {
           ok: false,
           status,
           error: err.code ?? "AXIOS_ERROR",
-          message: err.message,
-          response: body
+          message: sanitizeErrorMessage(err.message),
+          response: sanitizeSensitiveData(body)
         };
       }
       return {
         ok: false,
         status: undefined,
         error: "UNKNOWN_ERROR",
-        message: err instanceof Error ? err.message : String(err),
+        message: sanitizeErrorMessage(err),
         response: {}
       };
     }
@@ -20393,7 +20435,7 @@ async function paginacaoIds(status = "NORMAL") {
   const firstItems = res?.response?.item ?? [];
   if (!Array.isArray(firstItems)) {
     console.log(source_default.red(`\u274C get_item_list retornou item inv\xE1lido para status=${status}`));
-    console.log(res);
+    console.log(sanitizeSensitiveData(res));
     return [];
   }
   itensList.push(...firstItems);
@@ -20491,7 +20533,6 @@ try {
     console.log(`\u23F1\uFE0F Total: ${(ms / 1000).toFixed(5)}s`);
   }
 } catch (err) {
-  console.error(source_default.bgRed.bold("\u274C Falha ao carregar access_token:"), err);
-  console.error("Config atual:", InfoSellerConfig);
+  console.error(source_default.bgRed.bold("\u274C Falha ao carregar access_token:"), sanitizeErrorMessage(err));
   process.exit(1);
 }

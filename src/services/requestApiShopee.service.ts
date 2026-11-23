@@ -9,6 +9,7 @@ import axios from "axios";
 import { InfoSellerConfig } from "../config.js";
 import { signPartner } from "./sign.service.js";
 import { getAccessToken } from "./database.service.js";
+import { sanitizeErrorMessage, sanitizeSensitiveData } from "./errorSanitizer.service.js";
 
 // ====================== TYPE AND INTERFACE =======================
 
@@ -98,11 +99,11 @@ export function assertShopeeOk<TResponse>(
     res: HttpRequestResponse<ShopeeEnvelope<TResponse>>
 ): ShopeeEnvelope<TResponse> {
     if (isHttpRequestError(res)) {
-        throw new Error(`[Shopee][HTTP] ${res.status ?? ""} ${res.error}: ${res.message}`);
+        throw new Error(`[Shopee][HTTP] ${res.status ?? ""} ${sanitizeErrorMessage(res.error)}: ${sanitizeErrorMessage(res.message)}`);
     }
 
     if (res.error) {
-        throw new Error(`[Shopee][API] ${res.error}: ${res.message || "Sem mensagem"}`);
+        throw new Error(`[Shopee][API] ${sanitizeErrorMessage(res.error)}: ${sanitizeErrorMessage(res.message || "Sem mensagem")}`);
     }
 
     return res;
@@ -254,7 +255,7 @@ export async function shopeeGet<TSuccess>(
     const path = rawPath.split("?")[0];
     if (!path) {
         throw new Error(
-            `[requestApiShopee][GET] Ocorreu um erro ao definir o path. rawPath: ${rawPath}, urlWithPath: ${urlWithPath}, info.host: ${info.host}`
+            "[requestApiShopee][GET] Ocorreu um erro ao definir o path da requisição."
         );
     }
 
@@ -325,8 +326,8 @@ export async function shopeeGet<TSuccess>(
                             ok: false,
                             status,
                             error: err.code ?? "AUTH_ERROR",
-                            message: `${formatAxiosErrPrefix(status, err.code)}: ${err.message} (refresh token excedeu ${MAX_AUTH_REFRESH_TRIES} tentativa(s))`,
-                            response: body,
+                            message: `${formatAxiosErrPrefix(status, err.code)}: ${sanitizeErrorMessage(err.message)} (refresh token excedeu ${MAX_AUTH_REFRESH_TRIES} tentativa(s))`,
+                            response: sanitizeSensitiveData(body),
                         };
                     }
 
@@ -354,8 +355,8 @@ export async function shopeeGet<TSuccess>(
                             ok: false,
                             status,
                             error: err.code ?? "TOO_MANY_REQUESTS",
-                            message: `${formatAxiosErrPrefix(status, err.code)}: ${err.message} (429 aguardou ${Math.round(retry.tooManyRequestsWaitedMs / 1000)}s no total; limite=600s)`,
-                            response: body,
+                            message: `${formatAxiosErrPrefix(status, err.code)}: ${sanitizeErrorMessage(err.message)} (429 aguardou ${Math.round(retry.tooManyRequestsWaitedMs / 1000)}s no total; limite=600s)`,
+                            response: sanitizeSensitiveData(body),
                         };
                     }
 
@@ -369,8 +370,8 @@ export async function shopeeGet<TSuccess>(
                     ok: false,
                     status,
                     error: err.code ?? "AXIOS_ERROR",
-                    message: err.message,
-                    response: body,
+                    message: sanitizeErrorMessage(err.message),
+                    response: sanitizeSensitiveData(body),
                 };
             }
 
@@ -379,7 +380,7 @@ export async function shopeeGet<TSuccess>(
                 ok: false,
                 status: undefined,
                 error: "UNKNOWN_ERROR",
-                message: err instanceof Error ? err.message : String(err),
+                message: sanitizeErrorMessage(err),
                 response: {},
             };
         }
@@ -419,7 +420,7 @@ export async function shopeePost<TSuccess>(
     const path = rawPath.split("?")[0];
     if (!path) {
         throw new Error(
-            `[requestApiShopee][POST] Ocorreu um erro ao definir o path. rawPath: ${rawPath}, urlWithPath: ${urlWithPath}, info.host: ${info.host}`
+            "[requestApiShopee][POST] Ocorreu um erro ao definir o path da requisição."
         );
     }
 
@@ -461,8 +462,6 @@ export async function shopeePost<TSuccess>(
         if (parameters.shop_id) query["shop_id"] = info.shopId;
 
         try {
-            // console.log("POST", urlWithPath, query); //TODO [DEBUG]
-            // console.log('BODY', bodyOptional); //TODO [DEBUG]
             const { data: dataResponse } = await axios.post<TSuccess>(
                 urlWithPath,
                 bodyOptional,
@@ -487,8 +486,8 @@ export async function shopeePost<TSuccess>(
                             ok: false,
                             status,
                             error: err.code ?? "AUTH_ERROR",
-                            message: `${formatAxiosErrPrefix(status, err.code)}: ${err.message} (refresh token excedeu ${MAX_AUTH_REFRESH_TRIES} tentativa(s))`,
-                            response: body,
+                            message: `${formatAxiosErrPrefix(status, err.code)}: ${sanitizeErrorMessage(err.message)} (refresh token excedeu ${MAX_AUTH_REFRESH_TRIES} tentativa(s))`,
+                            response: sanitizeSensitiveData(body),
                         };
                     }
 
@@ -515,8 +514,8 @@ export async function shopeePost<TSuccess>(
                             ok: false,
                             status,
                             error: err.code ?? "TOO_MANY_REQUESTS",
-                            message: `${formatAxiosErrPrefix(status, err.code)}: ${err.message} (429 aguardou ${Math.round(retry.tooManyRequestsWaitedMs / 1000)}s no total; limite=600s)`,
-                            response: body,
+                            message: `${formatAxiosErrPrefix(status, err.code)}: ${sanitizeErrorMessage(err.message)} (429 aguardou ${Math.round(retry.tooManyRequestsWaitedMs / 1000)}s no total; limite=600s)`,
+                            response: sanitizeSensitiveData(body),
                         };
                     }
 
@@ -529,8 +528,8 @@ export async function shopeePost<TSuccess>(
                     ok: false,
                     status,
                     error: err.code ?? "AXIOS_ERROR",
-                    message: err.message,
-                    response: body,
+                    message: sanitizeErrorMessage(err.message),
+                    response: sanitizeSensitiveData(body),
                 };
             }
 
@@ -538,7 +537,7 @@ export async function shopeePost<TSuccess>(
                 ok: false,
                 status: undefined,
                 error: "UNKNOWN_ERROR",
-                message: err instanceof Error ? err.message : String(err),
+                message: sanitizeErrorMessage(err),
                 response: {},
             };
         }

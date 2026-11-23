@@ -5,7 +5,6 @@
 import { get_item_base_info, type GetItemBaseInfoResponseItemList } from "./API/GET/get_item_base_info.js";
 import { get_item_list, type GetItemListItemStatus, type ItemListData } from "./API/GET/get_item_list.js";
 import { get_model_list } from "./API/GET/get_model_list.js";
-import { InfoSellerConfig } from "./config.js";
 
 //? [COMUM IMPORTS]
 import { chunk } from "./services/batch.service.js";
@@ -13,6 +12,7 @@ import { chunk } from "./services/batch.service.js";
 //? [CONFIG IMPORTS]
 import { _db, _dbMarketplaces, getAccessToken, upsertShopeeItems, upsertShopeeModels } from "./services/database.service.js";
 import chalk from "chalk";
+import { sanitizeErrorMessage, sanitizeSensitiveData } from "./services/errorSanitizer.service.js";
 
 //! FUNÇÕES DISPONÍVEIS:
 //? [GET]
@@ -43,7 +43,7 @@ async function paginacaoIds(status: GetItemListItemStatus = "NORMAL"): Promise<n
     const firstItems = res?.response?.item ?? [];
     if (!Array.isArray(firstItems)) {
         console.log(chalk.red(`❌ get_item_list retornou item inválido para status=${status}`));
-        console.log(res);
+        console.log(sanitizeSensitiveData(res));
         return [];
     }
 
@@ -182,7 +182,6 @@ try {
     if (ms / 1000 > 5) { console.log(`⏱️ Total: ${(ms / 1000).toFixed(2)}s`); }
     else { console.log(`⏱️ Total: ${(ms / 1000).toFixed(5)}s`); }
 } catch (err: unknown) {
-    console.error(chalk.bgRed.bold("❌ Falha ao carregar access_token:"), err);
-    console.error("Config atual:", InfoSellerConfig);
+    console.error(chalk.bgRed.bold("❌ Falha ao carregar access_token:"), sanitizeErrorMessage(err));
     process.exit(1);
 }

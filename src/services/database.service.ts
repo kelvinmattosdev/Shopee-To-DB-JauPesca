@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import type { QueryResult, QueryResultRow } from "pg";
 import { databaseInfosForAccessToken, databaseInfosForMarketplace, InfoSellerConfig } from "../config.js";
+import { sanitizeErrorMessage } from "./errorSanitizer.service.js";
 
 const dbUrl = databaseInfosForAccessToken.databaseUrl;
 const schema = databaseInfosForAccessToken.databaseSchema;
@@ -61,6 +62,10 @@ function getPool(target: DbTarget) {
     return target === "marketplaces" ? _dbMarketplaces : _db;
 }
 
+function databaseOperationError(error: unknown): Error {
+    return new Error(`[Database] Falha na operação: ${sanitizeErrorMessage(error)}`);
+}
+
 async function queryWithRetry<T extends QueryResultRow>(
     text: string,
     params: unknown[],
@@ -74,9 +79,13 @@ async function queryWithRetry<T extends QueryResultRow>(
     } catch (err) {
         if (retries > 0 && isTransientDbError(err)) {
             await new Promise((r) => setTimeout(r, 200));
-            return await pool.query<T>(text, params);
+            try {
+                return await pool.query<T>(text, params);
+            } catch (retryError) {
+                throw databaseOperationError(retryError);
+            }
         }
-        throw err;
+        throw databaseOperationError(err);
     }
 }
 
@@ -93,9 +102,7 @@ export async function getAccessToken(): Promise<string> {
     const token = res.rows[0]?.access_token;
 
     if (!token) {
-        throw new Error(
-            `Nenhum access_token encontrado em ${fullTable} para provider='shopee'`
-        )
+        throw new Error("[Database] Nenhum access_token encontrado para o provider configurado.")
     }
     InfoSellerConfig.accessToken = token;
     return token;
@@ -297,7 +304,7 @@ DO UPDATE SET
             await queryWithRetry("COMMIT", [], 1, { db: "marketplaces" });
         } catch (e) {
             await queryWithRetry("ROLLBACK", [], 1, { db: "marketplaces" });
-            throw e;
+            throw databaseOperationError(e);
         }
     });
 }
@@ -446,7 +453,7 @@ DO UPDATE SET
             await queryWithRetry("COMMIT", [], 1, { db: "marketplaces" });
         } catch (e) {
             await queryWithRetry("ROLLBACK", [], 1, { db: "marketplaces" });
-            throw e;
+            throw databaseOperationError(e);
         }
     });
 }

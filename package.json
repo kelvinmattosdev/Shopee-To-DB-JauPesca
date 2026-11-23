@@ -7,7 +7,8 @@
     "dev": "bun run src/index.ts",
     "start": "bun run src/index.ts",
     "typecheck": "tsc --noEmit",
-    "build": "bun build ./src/index.ts --outdir ./build --target bun"
+    "build": "bun build ./src/index.ts --outdir ./build --target bun",
+    "test:security": "bun run scripts/check-secret-redaction.ts"
   },
   "repository": {
     "type": "git",
